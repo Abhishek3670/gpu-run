@@ -104,9 +104,81 @@ mkdir -p bundles
 
 For a remote Linux client on your LAN, bind to the server's reachable address
 instead of `127.0.0.1`, then point `gpu-run --server` at that host and port.
+For remote access, use `0.0.0.0:50051` so the service is reachable beyond the
+WSL loopback interface:
+
+```bash
+pkill gpu-server || true
+mkdir -p bundles
+./build/gpu-server \
+  --bind 0.0.0.0:50051 \
+  --bundle-root ./bundles \
+  --allow-image ubuntu:22.04 \
+  --token your-token
+```
+
+Validate the listen socket inside WSL:
+
+```bash
+ss -ltnp | grep 50051
+```
+
+Expected shape:
+
+```text
+LISTEN ... *:50051 ... gpu-server
+```
 
 If you enable auth on the server, pass the same token to the CLI with
 `--token <value>`.
+
+### 3a. Expose WSL to the LAN from Windows
+
+Resolve the current WSL IP from Ubuntu:
+
+```bash
+hostname -I
+```
+
+Then run the helper from an elevated PowerShell on Windows and pass the actual
+IP value, not the literal string `WslIp` and not angle-bracket placeholders:
+
+```powershell
+powershell.exe -ExecutionPolicy Bypass -File .\scripts\windows_expose_wsl.ps1 `
+  -ListenAddress 0.0.0.0 `
+  -ListenPort 50051 `
+  -WslIp 172.23.1.26 `
+  -WslPort 50051 `
+  -AllowedSubnet 192.168.29.0/24
+```
+
+Validate the port forward on Windows:
+
+```powershell
+netsh interface portproxy show v4tov4
+```
+
+Expected shape:
+
+```text
+Listen on ipv4:             Connect to ipv4:
+
+Address         Port        Address         Port
+--------------- ----------  --------------- ----------
+0.0.0.0         50051       172.23.1.26     50051
+```
+
+Then confirm that the Windows host is listening on its LAN IP:
+
+```powershell
+Test-NetConnection -ComputerName 192.168.29.78 -Port 50051
+```
+
+Use that Windows LAN IP from the remote Linux client:
+
+```bash
+./build/gpu-run --server 192.168.29.78:50051 --token your-token list-gpus
+```
 
 ### 4. Check GPU visibility
 
@@ -217,6 +289,29 @@ Common patterns:
 - `docker pull ubuntu:22.04` on the wrong machine:
   pull runnable images on the WSL server, not on the remote client. The remote
   client only uploads scripts and calls gRPC.
+- `Connection refused` from the remote Linux client:
+  this is usually a TCP routing or bind problem, not an auth problem. Check all
+  of the following:
+
+  ```bash
+  # inside WSL
+  ss -ltnp | grep 50051
+  hostname -I
+  ```
+
+  ```powershell
+  # inside elevated PowerShell on Windows
+  netsh interface portproxy show v4tov4
+  Test-NetConnection -ComputerName <windows-lan-ip> -Port 50051
+  ```
+
+  Fixes:
+
+  - restart `gpu-server` with `--bind 0.0.0.0:50051`, not `127.0.0.1:50051`
+  - ensure only one `gpu-server` is running before you restart it
+  - recreate the portproxy with the current WSL IP from `hostname -I`
+  - verify `portproxy show v4tov4` contains a numeric WSL IP, not a literal
+    placeholder such as `WslIp`
 
 ## End-To-End Smoke Test
 
