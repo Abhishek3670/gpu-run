@@ -12,6 +12,8 @@ set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 
 include(CTest)
 
+option(GPU_DISPATCH_BUILD_SERVER "Build gpu-server and server-side components" ON)
+
 find_package(absl CONFIG REQUIRED)
 find_package(Protobuf REQUIRED)
 find_package(Threads REQUIRED)
@@ -35,16 +37,18 @@ if(NOT gRPC_FOUND)
   endif()
 endif()
 
-find_path(NVML_INCLUDE_DIR nvml.h HINTS /usr/local/cuda/include /usr/include)
-find_library(
-  NVML_LIBRARY
-  NAMES nvidia-ml libnvidia-ml.so.1
-  HINTS /usr/lib/wsl/lib /usr/lib/x86_64-linux-gnu
-  REQUIRED
-)
+if(GPU_DISPATCH_BUILD_SERVER)
+  find_path(NVML_INCLUDE_DIR nvml.h HINTS /usr/local/cuda/include /usr/include)
+  find_library(
+    NVML_LIBRARY
+    NAMES nvidia-ml libnvidia-ml.so.1
+    HINTS /usr/lib/wsl/lib /usr/lib/x86_64-linux-gnu
+    REQUIRED
+  )
 
-if(NOT NVML_INCLUDE_DIR)
-  message(FATAL_ERROR "NVML headers were not found. Install the CUDA toolkit in WSL2.")
+  if(NOT NVML_INCLUDE_DIR)
+    message(FATAL_ERROR "NVML headers were not found. Install the CUDA toolkit in WSL2.")
+  endif()
 endif()
 
 set(PROTO_FILE ${CMAKE_CURRENT_SOURCE_DIR}/proto/gpu_service.proto)
@@ -93,46 +97,48 @@ target_link_libraries(
     absl::statusor
 )
 
-add_library(gpu_manager_lib gpu_manager/gpu_manager.cc)
-target_include_directories(gpu_manager_lib PUBLIC ${CMAKE_CURRENT_SOURCE_DIR} ${NVML_INCLUDE_DIR})
-target_link_libraries(
-  gpu_manager_lib
-  PUBLIC
-    absl::status
-    absl::statusor
-    absl::strings
-    Threads::Threads
-    ${NVML_LIBRARY}
-)
-
-add_library(worker_lib worker/worker.cc)
-target_include_directories(worker_lib PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
-target_link_libraries(
-  worker_lib
-  PUBLIC
-    scheduler_lib
-    absl::status
-    absl::statusor
-    absl::strings
-    absl::time
-    Threads::Threads
-)
-
-add_library(server_lib server/auth.cc server/server.cc)
-target_include_directories(server_lib PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
-target_link_libraries(
-  server_lib
-  PUBLIC
-    gpu_proto
-    scheduler_lib
+if(GPU_DISPATCH_BUILD_SERVER)
+  add_library(gpu_manager_lib gpu_manager/gpu_manager.cc)
+  target_include_directories(gpu_manager_lib PUBLIC ${CMAKE_CURRENT_SOURCE_DIR} ${NVML_INCLUDE_DIR})
+  target_link_libraries(
     gpu_manager_lib
+    PUBLIC
+      absl::status
+      absl::statusor
+      absl::strings
+      Threads::Threads
+      ${NVML_LIBRARY}
+  )
+
+  add_library(worker_lib worker/worker.cc)
+  target_include_directories(worker_lib PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+  target_link_libraries(
     worker_lib
-    absl::status
-    absl::statusor
-    absl::strings
-    absl::time
-    gRPC::grpc++
-)
+    PUBLIC
+      scheduler_lib
+      absl::status
+      absl::statusor
+      absl::strings
+      absl::time
+      Threads::Threads
+  )
+
+  add_library(server_lib server/auth.cc server/server.cc)
+  target_include_directories(server_lib PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+  target_link_libraries(
+    server_lib
+    PUBLIC
+      gpu_proto
+      scheduler_lib
+      gpu_manager_lib
+      worker_lib
+      absl::status
+      absl::statusor
+      absl::strings
+      absl::time
+      gRPC::grpc++
+  )
+endif()
 
 add_library(client_lib cli/client.cc)
 target_include_directories(client_lib PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
@@ -146,13 +152,15 @@ target_link_libraries(
     gRPC::grpc++
 )
 
-add_executable(gpu-server server/main.cc)
-target_link_libraries(gpu-server PRIVATE server_lib)
+if(GPU_DISPATCH_BUILD_SERVER)
+  add_executable(gpu-server server/main.cc)
+  target_link_libraries(gpu-server PRIVATE server_lib)
+endif()
 
 add_executable(gpu-run cli/main.cc)
 target_link_libraries(gpu-run PRIVATE client_lib)
 
-if(BUILD_TESTING)
+if(BUILD_TESTING AND GPU_DISPATCH_BUILD_SERVER)
   find_program(BASH_EXECUTABLE bash REQUIRED)
 
   add_executable(scheduler_test tests/scheduler_test.cc)

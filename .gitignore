@@ -18,6 +18,7 @@ gpu_server/
 # Local runtime data
 models/
 build/
+build-*/
 cmake-build-*/
 Testing/
 *.o

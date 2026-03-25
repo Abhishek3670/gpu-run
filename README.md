@@ -66,6 +66,32 @@ cmake -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build --parallel
 ```
 
+For a remote Linux client that only needs `gpu-run`, build the client binary
+without the server-side NVML and Docker pieces:
+
+```bash
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release \
+  -DGPU_DISPATCH_BUILD_SERVER=OFF \
+  -DBUILD_TESTING=OFF
+cmake --build build --target gpu-run --parallel
+```
+
+If the remote client is missing the C++ dependencies needed for `gpu-run`,
+install them first:
+
+```bash
+sudo apt update
+sudo apt install -y \
+  build-essential \
+  cmake \
+  pkg-config \
+  libabsl-dev \
+  libprotobuf-dev \
+  protobuf-compiler \
+  libgrpc++-dev \
+  protobuf-compiler-grpc
+```
+
 ### 3. Start the server
 
 ```bash
@@ -161,6 +187,36 @@ Common patterns:
   because the server mounts the whole directory at `/workspace`.
 - Remote client:
   keep the same command shape, but change `--server` to the host's LAN address.
+  If you are compiling on a client-only machine, use
+  `-DGPU_DISPATCH_BUILD_SERVER=OFF -DBUILD_TESTING=OFF` during CMake
+  configuration.
+
+## Remote Client Troubleshooting
+
+- `The source directory ... does not appear to contain CMakeLists.txt`:
+  you ran `cmake` outside the cloned repository. `cd` into the repo root first
+  and confirm `ls CMakeLists.txt` succeeds before configuring.
+- `Unable to (re)create the private pkgRedirects directory`:
+  the repo or `build/` directory is not writable by your current user. Fix the
+  ownership, remove the stale build directory, then re-run CMake:
+
+  ```bash
+  sudo chown -R $USER:$USER /path/to/GPU_server
+  rm -rf build
+  cmake -S . -B build -DCMAKE_BUILD_TYPE=Release \
+    -DGPU_DISPATCH_BUILD_SERVER=OFF \
+    -DBUILD_TESTING=OFF
+  ```
+
+- `Could not find a package configuration file provided by "absl"`:
+  the client-side development packages are missing. Install the packages listed
+  above, then re-run the configure step.
+- `Could not find NVML_LIBRARY` on a remote Linux client:
+  you are configuring the full server build on a machine that only needs the
+  CLI. Reconfigure with `-DGPU_DISPATCH_BUILD_SERVER=OFF -DBUILD_TESTING=OFF`.
+- `docker pull ubuntu:22.04` on the wrong machine:
+  pull runnable images on the WSL server, not on the remote client. The remote
+  client only uploads scripts and calls gRPC.
 
 ## End-To-End Smoke Test
 

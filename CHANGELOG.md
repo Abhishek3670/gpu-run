@@ -7,6 +7,9 @@ All notable changes to this project will be documented in this file.
 ### Added
 - Optional WSL end-to-end smoke test for submit/status/log retrieval that runs through CTest when `GPU_DISPATCH_E2E_IMAGE` is set to a suitable local Docker image.
 
+### Changed
+- Added a client-only CMake path for building `gpu-run` without NVML or server-side components, and documented common remote-client setup failures in the README.
+
 ## [0.1.0] - 2026-03-25
 
 ### Added
