@@ -53,6 +53,7 @@ class GpuServer {
     std::string bundle_id;
     std::filesystem::path path;
     std::string digest;
+    std::size_t active_jobs = 0;
   };
 
   friend class SubmitJobCall;
@@ -86,12 +87,16 @@ class GpuServer {
   [[nodiscard]] absl::StatusOr<BundleInfo> BeginBundleUpload();
   [[nodiscard]] absl::StatusOr<std::filesystem::path> ResolveBundlePath(const std::string& bundle_id) const;
   void RegisterBundle(BundleInfo bundle);
+  void RecordBundleUse(const std::string& job_id, const std::string& bundle_id);
+  void CleanupTerminalBundles();
+  void ReleaseBundleForJob(const std::string& job_id);
 
   [[nodiscard]] static grpc::Status ToGrpcStatus(const absl::Status& status);
   [[nodiscard]] static scheduler::TaskType FromProtoTaskType(TaskType task_type);
   [[nodiscard]] static scheduler::JobPriority FromProtoPriority(Priority priority);
   [[nodiscard]] static JobState ToProtoJobState(scheduler::JobState state);
   [[nodiscard]] static LogSource ToProtoLogSource(worker::LogSource source);
+  [[nodiscard]] static bool IsTerminalState(scheduler::JobState state);
 
   ServerConfig config_;
   TokenAuth auth_;
@@ -106,7 +111,9 @@ class GpuServer {
 
   mutable std::mutex bundle_mutex_;
   std::unordered_map<std::string, BundleInfo> bundles_;
+  std::unordered_map<std::string, std::string> job_bundles_;
   std::atomic<std::uint64_t> next_bundle_id_{1};
 };
 
 }  // namespace gpu::server
+

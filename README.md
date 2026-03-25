@@ -14,6 +14,8 @@ running WSL2 Ubuntu.
 - `worker/`: Docker launcher and bounded log buffer
 - `cli/`: `gpu-run` client
 - `scripts/`: Windows helper scripts for exposing WSL over LAN
+- `config/`: checked-in image allowlist files
+- `examples/`: optional workload bundles, including the CUDA smoke benchmark
 - `tests/`: lightweight unit tests wired through CTest
 
 ## Build
@@ -50,10 +52,10 @@ switch the CLI to a LAN address once the local flow works.
 `gpu-server` only accepts images that:
 
 - already exist on the host
-- are explicitly allowlisted with `--allow-image`
+- are listed in `config/images.allowlist` by default or added with `--allow-image`
 - can run the entrypoint you pass from `gpu-run`
 
-For a first smoke test, a simple shell-capable image is enough:
+The default checked-in allowlist is `config/images.allowlist`. It currently includes `ubuntu:22.04` for basic smoke tests and `nvidia/cuda:12.4.1-devel-ubuntu22.04` for CUDA workloads. Edit that file when you want to add or remove baseline images instead of rewriting the server command line. For a first smoke test, a simple shell-capable image is enough:
 
 ```bash
 docker image inspect ubuntu:22.04 >/dev/null 2>&1 || docker pull ubuntu:22.04
@@ -98,8 +100,7 @@ sudo apt install -y \
 mkdir -p bundles
 ./build/gpu-server \
   --bind 127.0.0.1:50051 \
-  --bundle-root ./bundles \
-  --allow-image ubuntu:22.04
+  --bundle-root ./bundles
 ```
 
 For a remote Linux client on your LAN, bind to the server's reachable address
@@ -113,7 +114,6 @@ mkdir -p bundles
 ./build/gpu-server \
   --bind 0.0.0.0:50051 \
   --bundle-root ./bundles \
-  --allow-image ubuntu:22.04 \
   --token your-token
 ```
 
@@ -128,6 +128,8 @@ Expected shape:
 ```text
 LISTEN ... *:50051 ... gpu-server
 ```
+
+By default the server loads `config/images.allowlist`. Use `--allowlist /path/to/file` to replace that file, or repeat `--allow-image <image>` to add extra images on top of the file-backed list.
 
 If you enable auth on the server, pass the same token to the CLI with
 `--token <value>`.
@@ -214,10 +216,16 @@ Notes:
 
 - `--script` uploads the local file or directory to the server. It is not a
   server-side filesystem path.
+- Uploaded files are staged under the server `--bundle-root` and mounted into
+  the job container at `/workspace`.
 - Use `--entrypoint` plus `--` when the container should invoke a shell or
   another launcher before your uploaded script.
+- The image must be present in `config/images.allowlist`, unless the server was
+  started with an additional `--allow-image` override for that image.
 - `--gpus`, `--prefer-gpus`, `--priority`, and `--task` are optional for the
   first run.
+- In current builds, staged bundle directories are removed automatically after
+  the job reaches `SUCCEEDED`, `FAILED`, or `CANCELED`.
 
 ### 6. Follow the job
 
@@ -262,6 +270,35 @@ Common patterns:
   If you are compiling on a client-only machine, use
   `-DGPU_DISPATCH_BUILD_SERVER=OFF -DBUILD_TESTING=OFF` during CMake
   configuration.
+
+### 9. Run the CUDA smoke benchmark
+
+The repository includes a CUDA workload bundle under `examples/cuda_smoke`.
+Use the checked-in CUDA image when you want to validate GPU execution instead of
+just container startup.
+
+Make sure the CUDA image is cached on the WSL server:
+
+```bash
+docker image inspect nvidia/cuda:12.4.1-devel-ubuntu22.04 >/dev/null 2>&1 || \
+  docker pull nvidia/cuda:12.4.1-devel-ubuntu22.04
+```
+
+Then submit the benchmark:
+
+```bash
+./build/gpu-run \
+  --server 127.0.0.1:50051 \
+  run \
+  --script ./examples/cuda_smoke \
+  --image nvidia/cuda:12.4.1-devel-ubuntu22.04 \
+  --entrypoint /bin/bash \
+  -- ./run.sh 4096 40 5
+```
+
+That workload compiles `matmul_bench.cu` inside the container with `nvcc`, runs a
+matrix-multiply benchmark on the GPU, emits `nvidia-smi` telemetry, and prints a
+GFLOP/s summary in the job logs.
 
 ## Remote Client Troubleshooting
 
@@ -338,5 +375,13 @@ test is skipped.
 - The control plane is fully native C++; no Python is used in the build,
   scheduler, server, CLI, or worker runtime.
 - Submitted workloads may use any runtime inside the user container image.
-- The older Python files in this repository are legacy artifacts and are not
-  part of the C++ build graph.
+- Bundle directories from older runs or abrupt server shutdowns may still need
+  manual cleanup under `--bundle-root`, because cleanup only applies to jobs the
+  current server process tracks.
+- The legacy Python implementation is archived on the `python_gpu_server` branch
+  and is not part of `main`.
+
+
+
+
+
