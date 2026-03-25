@@ -32,6 +32,7 @@ Testing/
 # Editor artifacts
 .vscode/
 .idea/
+AGENT.md
 tempCodeRunnerFile.py
 gpu_server_temp.py
 

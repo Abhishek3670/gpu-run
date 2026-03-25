@@ -14,6 +14,8 @@ All notable changes to this project will be documented in this file.
 - Bundles staged under `--bundle-root` are now cleaned up automatically once tracked jobs reach a terminal state.
 - `gpu-server` now loads `config/images.allowlist` by default and treats repeated `--allow-image` flags as additive overrides.
 - Removed the tracked legacy Python root files from `main`; the archive remains on `python_gpu_server`.
+- Scrubbed hardcoded example IP addresses from the README and replaced them with placeholders.
+- Stopped tracking `AGENT.md` on `main` and added it to `.gitignore`.
 
 ## [0.1.0] - 2026-03-25
 

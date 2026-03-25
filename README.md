@@ -143,15 +143,15 @@ hostname -I
 ```
 
 Then run the helper from an elevated PowerShell on Windows and pass the actual
-IP value, not the literal string `WslIp` and not angle-bracket placeholders:
+WSL IP and LAN subnet for your machine:
 
 ```powershell
 powershell.exe -ExecutionPolicy Bypass -File .\scripts\windows_expose_wsl.ps1 `
   -ListenAddress 0.0.0.0 `
   -ListenPort 50051 `
-  -WslIp 172.23.1.26 `
+  -WslIp <wsl-ip> `
   -WslPort 50051 `
-  -AllowedSubnet 192.168.29.0/24
+  -AllowedSubnet <lan-subnet-cidr>
 ```
 
 Validate the port forward on Windows:
@@ -167,19 +167,19 @@ Listen on ipv4:             Connect to ipv4:
 
 Address         Port        Address         Port
 --------------- ----------  --------------- ----------
-0.0.0.0         50051       172.23.1.26     50051
+0.0.0.0         50051       <wsl-ip>        50051
 ```
 
 Then confirm that the Windows host is listening on its LAN IP:
 
 ```powershell
-Test-NetConnection -ComputerName 192.168.29.78 -Port 50051
+Test-NetConnection -ComputerName <windows-lan-ip> -Port 50051
 ```
 
 Use that Windows LAN IP from the remote Linux client:
 
 ```bash
-./build/gpu-run --server 192.168.29.78:50051 --token your-token list-gpus
+./build/gpu-run --server <windows-lan-ip>:50051 --token your-token list-gpus
 ```
 
 ### 4. Check GPU visibility
