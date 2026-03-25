@@ -1,0 +1,4 @@
+# Default GPU job images.
+ubuntu:22.04
+nvidia/cuda:12.4.1-devel-ubuntu22.04
+

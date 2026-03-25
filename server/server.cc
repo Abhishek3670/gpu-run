@@ -3,6 +3,7 @@
 #include <deque>
 #include <filesystem>
 #include <fstream>
+#include <iostream>
 #include <sstream>
 #include <string_view>
 #include <system_error>
@@ -607,6 +608,7 @@ void GpuServer::Tick() {
     (void)finished_status;
   }
   scheduler_.TryDispatch(gpu_manager_, worker_);
+  CleanupTerminalBundles();
 }
 
 grpc::Status GpuServer::HandleSubmit(
@@ -662,9 +664,11 @@ grpc::Status GpuServer::HandleSubmit(
     return ToGrpcStatus(job_id.status());
   }
 
+  RecordBundleUse(*job_id, request.bundle_id());
   response->set_job_id(*job_id);
   response->set_state(JobState::QUEUED);
   scheduler_.TryDispatch(gpu_manager_, worker_);
+  CleanupTerminalBundles();
   return grpc::Status::OK;
 }
 
@@ -743,6 +747,7 @@ grpc::Status GpuServer::HandleCancel(
   response->set_job_id(cancellation->view.job_id);
   response->set_state(ToProtoJobState(cancellation->view.state));
   response->set_status_message(cancellation->view.status_message);
+  CleanupTerminalBundles();
   return grpc::Status::OK;
 }
 
@@ -776,6 +781,60 @@ absl::StatusOr<std::filesystem::path> GpuServer::ResolveBundlePath(const std::st
 void GpuServer::RegisterBundle(BundleInfo bundle) {
   std::lock_guard<std::mutex> lock(bundle_mutex_);
   bundles_[bundle.bundle_id] = std::move(bundle);
+}
+
+void GpuServer::RecordBundleUse(const std::string& job_id, const std::string& bundle_id) {
+  std::lock_guard<std::mutex> lock(bundle_mutex_);
+  const auto it = bundles_.find(bundle_id);
+  if (it == bundles_.end()) {
+    return;
+  }
+
+  ++it->second.active_jobs;
+  job_bundles_[job_id] = bundle_id;
+}
+
+void GpuServer::CleanupTerminalBundles() {
+  for (const auto& job : scheduler_.Snapshot()) {
+    if (!IsTerminalState(job.state)) {
+      continue;
+    }
+    ReleaseBundleForJob(job.job_id);
+  }
+}
+
+void GpuServer::ReleaseBundleForJob(const std::string& job_id) {
+  std::filesystem::path bundle_path;
+  {
+    std::lock_guard<std::mutex> lock(bundle_mutex_);
+    const auto job_it = job_bundles_.find(job_id);
+    if (job_it == job_bundles_.end()) {
+      return;
+    }
+
+    const auto bundle_it = bundles_.find(job_it->second);
+    if (bundle_it != bundles_.end()) {
+      if (bundle_it->second.active_jobs > 0) {
+        --bundle_it->second.active_jobs;
+      }
+      if (bundle_it->second.active_jobs == 0) {
+        bundle_path = bundle_it->second.path;
+        bundles_.erase(bundle_it);
+      }
+    }
+
+    job_bundles_.erase(job_it);
+  }
+
+  if (bundle_path.empty()) {
+    return;
+  }
+
+  std::error_code error;
+  std::filesystem::remove_all(bundle_path, error);
+  if (error) {
+    std::cerr << "failed to remove bundle path " << bundle_path << ": " << error.message() << '\n';
+  }
 }
 
 grpc::Status GpuServer::ToGrpcStatus(const absl::Status& status) {
@@ -844,7 +903,24 @@ LogSource GpuServer::ToProtoLogSource(worker::LogSource source) {
   return source == worker::LogSource::kStdout ? LogSource::STDOUT : LogSource::STDERR;
 }
 
+bool GpuServer::IsTerminalState(scheduler::JobState state) {
+  switch (state) {
+    case scheduler::JobState::kSucceeded:
+    case scheduler::JobState::kFailed:
+    case scheduler::JobState::kCanceled:
+      return true;
+    case scheduler::JobState::kQueued:
+    case scheduler::JobState::kDispatching:
+    case scheduler::JobState::kRunning:
+      return false;
+  }
+
+  return false;
+}
+
 }  // namespace gpu::server
+
+
 
 
 
