@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [Unreleased]
+
+### Added
+- Optional WSL end-to-end smoke test for submit/status/log retrieval that runs through CTest when `GPU_DISPATCH_E2E_IMAGE` is set to a suitable local Docker image.
+
 ## [0.1.0] - 2026-03-25
 
 ### Added

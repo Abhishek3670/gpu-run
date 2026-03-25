@@ -153,6 +153,8 @@ add_executable(gpu-run cli/main.cc)
 target_link_libraries(gpu-run PRIVATE client_lib)
 
 if(BUILD_TESTING)
+  find_program(BASH_EXECUTABLE bash REQUIRED)
+
   add_executable(scheduler_test tests/scheduler_test.cc)
   target_link_libraries(scheduler_test PRIVATE scheduler_lib gpu_manager_lib worker_lib)
   add_test(NAME scheduler_test COMMAND scheduler_test)
@@ -160,4 +162,15 @@ if(BUILD_TESTING)
   add_executable(log_streamer_test tests/log_streamer_test.cc)
   target_link_libraries(log_streamer_test PRIVATE worker_lib)
   add_test(NAME log_streamer_test COMMAND log_streamer_test)
+
+  add_test(
+    NAME gpu_dispatch_e2e
+    COMMAND
+      ${BASH_EXECUTABLE}
+      ${CMAKE_CURRENT_SOURCE_DIR}/tests/e2e_smoke.sh
+      $<TARGET_FILE:gpu-server>
+      $<TARGET_FILE:gpu-run>
+      ${CMAKE_CURRENT_SOURCE_DIR}/tests/e2e_workload/run.sh
+  )
+  set_tests_properties(gpu_dispatch_e2e PROPERTIES SKIP_RETURN_CODE 77)
 endif()
