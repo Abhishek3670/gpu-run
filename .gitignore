@@ -1,0 +1,29 @@
+# Python cache and build artifacts
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Local virtual environments
+.venv/
+venv/
+env/
+gpu_server/
+
+# Local runtime data
+models/
+
+# Editor artifacts
+.vscode/
+.idea/
+tempCodeRunnerFile.py
+gpu_server_temp.py
+
+# OS artifacts
+.DS_Store
+Thumbs.db
