@@ -1,53 +1,49 @@
-# GPU Server
+# GPU Dispatch Server
 
-Lightweight Flask service for CCTV-style inference workflows. The main server in
-`gpu_server.py` exposes:
+Native C++ GPU execution server for LAN-connected Linux clients. The system is a
+lightweight Slurm-style control plane that stages job bundles, schedules GPU
+workloads, and launches one Docker container per job on a Windows 11 host
+running WSL2 Ubuntu.
 
-- `GET /health` for runtime and model status
-- `POST /detect` for YOLO object detection
-- `POST /recognize` for person-plus-face detection using YOLO and OpenCV
+## Layout
 
-## Repo Layout
+- `proto/`: protobuf and gRPC contract
+- `server/`: async gRPC server and optional bearer-token auth
+- `scheduler/`: in-memory priority queue and job state machine
+- `gpu_manager/`: NVML-backed GPU discovery and lock tracking
+- `worker/`: Docker launcher and bounded log buffer
+- `cli/`: `gpu-run` client
+- `scripts/`: Windows helper scripts for exposing WSL over LAN
+- `tests/`: lightweight unit tests wired through CTest
 
-- `gpu_server.py`: main Flask application
-- `app.py`: small local helper script for scanning labels from JSON files
+## Build
 
-The repository intentionally ignores local virtual environments, downloaded
-model weights, and temporary editor files so Git only tracks source and project
-metadata.
-
-## Setup
-
-1. Create and activate a virtual environment.
-2. Install a matching PyTorch build for your CPU or CUDA setup from the official
-   PyTorch instructions.
-3. Install the remaining dependencies:
+Build inside WSL2 Ubuntu with the required C++ toolchain:
 
 ```bash
-pip install -r requirements.txt
+sudo apt install build-essential cmake protobuf-compiler-grpc
+cmake -B build -DCMAKE_BUILD_TYPE=Release
+cmake --build build --parallel
+ctest --test-dir build --output-on-failure
 ```
 
-## Configuration
+Required dependencies:
 
-The server reads these optional environment variables:
+- gRPC C++
+- Protobuf
+- Abseil
+- CUDA Toolkit with NVML headers and `libnvidia-ml`
+- Docker CLI available in WSL2
 
-- `AI_MODELS_PATH`: directory that stores YOLO weights and face data
-- `YOLO_MODEL_NAME`: model filename to load, defaults to `yolov8s.pt`
-- `HOST`: Flask bind host, defaults to `0.0.0.0`
-- `PORT`: Flask bind port, defaults to `5000`
+## Binaries
 
-If `AI_MODELS_PATH` is not set, the server uses a local `models/` directory
-under the repo root and downloads the YOLO weights on first run.
-
-## Run
-
-```bash
-python gpu_server.py
-```
+- `build/gpu-server`
+- `build/gpu-run`
 
 ## Notes
 
-- The current `/recognize` endpoint performs enhanced detection, not identity
-  recognition. The `face_recognition` dependency is not wired in.
-- Downloaded weights and other runtime artifacts are intentionally excluded from
-  Git.
+- The control plane is fully native C++; no Python is used in the build,
+  scheduler, server, CLI, or worker runtime.
+- Submitted workloads may use any runtime inside the user container image.
+- The older Python files in this repository are legacy artifacts and are not
+  part of the C++ build graph.

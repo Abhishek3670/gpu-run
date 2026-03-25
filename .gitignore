@@ -17,6 +17,16 @@ gpu_server/
 
 # Local runtime data
 models/
+build/
+cmake-build-*/
+Testing/
+*.o
+*.obj
+*.a
+*.so
+*.dll
+*.exe
+*.pt
 
 # Editor artifacts
 .vscode/

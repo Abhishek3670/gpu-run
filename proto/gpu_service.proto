@@ -1,0 +1,120 @@
+syntax = "proto3";
+
+package gpu;
+
+import "google/protobuf/empty.proto";
+
+enum TaskType {
+  TASK_TYPE_UNSPECIFIED = 0;
+  TRAINING = 1;
+  COMPUTE = 2;
+}
+
+enum Priority {
+  PRIORITY_UNSPECIFIED = 0;
+  LOW = 1;
+  MEDIUM = 2;
+  HIGH = 3;
+}
+
+enum JobState {
+  JOB_STATE_UNSPECIFIED = 0;
+  QUEUED = 1;
+  DISPATCHING = 2;
+  RUNNING = 3;
+  SUCCEEDED = 4;
+  FAILED = 5;
+  CANCELED = 6;
+}
+
+enum LogSource {
+  LOG_SOURCE_UNSPECIFIED = 0;
+  STDOUT = 1;
+  STDERR = 2;
+}
+
+message UploadBundleChunk {
+  string relative_path = 1;
+  bytes data = 2;
+  bool executable = 3;
+  bool eof = 4;
+}
+
+message UploadBundleResponse {
+  string bundle_id = 1;
+  string digest = 2;
+  string staged_path = 3;
+}
+
+message SubmitJobRequest {
+  string bundle_id = 1;
+  string entrypoint = 2;
+  repeated string args = 3;
+  TaskType task_type = 4;
+  string docker_image = 5;
+  Priority priority = 6;
+  uint32 gpu_count = 7;
+  repeated uint32 preferred_gpu_ids = 8;
+}
+
+message SubmitJobResponse {
+  string job_id = 1;
+  JobState state = 2;
+}
+
+message GetStatusRequest {
+  string job_id = 1;
+}
+
+message GetStatusResponse {
+  JobState state = 1;
+  repeated uint32 assigned_gpu_ids = 2;
+  uint32 queue_position = 3;
+  int32 exit_code = 4;
+  string status_message = 5;
+}
+
+message StreamLogsRequest {
+  string job_id = 1;
+}
+
+message StreamLogsResponse {
+  int64 sequence = 1;
+  int64 timestamp_unix_ms = 2;
+  LogSource source = 3;
+  bytes data = 4;
+  bool complete = 5;
+}
+
+message GpuInfo {
+  uint32 gpu_id = 1;
+  string model_name = 2;
+  uint64 total_memory_bytes = 3;
+  uint64 used_memory_bytes = 4;
+  uint32 utilization_percent = 5;
+  bool available = 6;
+  string locked_job_id = 7;
+}
+
+message ListGpusResponse {
+  repeated GpuInfo gpus = 1;
+}
+
+message CancelJobRequest {
+  string job_id = 1;
+}
+
+message CancelJobResponse {
+  string job_id = 1;
+  JobState state = 2;
+  string status_message = 3;
+}
+
+service GpuService {
+  rpc UploadBundle(stream UploadBundleChunk) returns (UploadBundleResponse);
+  rpc SubmitJob(SubmitJobRequest) returns (SubmitJobResponse);
+  rpc GetStatus(GetStatusRequest) returns (GetStatusResponse);
+  rpc StreamLogs(StreamLogsRequest) returns (stream StreamLogsResponse);
+  rpc ListGPUs(google.protobuf.Empty) returns (ListGpusResponse);
+  rpc CancelJob(CancelJobRequest) returns (CancelJobResponse);
+}
