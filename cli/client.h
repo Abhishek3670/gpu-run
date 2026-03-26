@@ -2,7 +2,9 @@
 
 #include <cstdint>
 #include <filesystem>
+#include <functional>
 #include <memory>
+#include <mutex>
 #include <optional>
 #include <ostream>
 #include <string>
@@ -13,6 +15,10 @@
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "gpu_service.grpc.pb.h"
+
+namespace gpu_run::tui {
+struct JobConfig;
+}  // namespace gpu_run::tui
 
 namespace gpu::cli {
 
@@ -55,11 +61,24 @@ class GpuRunClient {
  public:
   explicit GpuRunClient(ClientOptions options);
 
+  void ResetConnection(ClientOptions options);
+  [[nodiscard]] ClientOptions GetOptions() const;
+
   [[nodiscard]] absl::StatusOr<std::string> RunJob(const RunOptions& options);
+  [[nodiscard]] absl::StatusOr<std::string> UploadBundleWithProgress(
+      const std::filesystem::path& path,
+      std::function<void(std::int64_t bytes_sent)> progress_callback);
+  [[nodiscard]] absl::StatusOr<std::string> SubmitJobExplicit(
+      const std::string& bundle_id,
+      const gpu_run::tui::JobConfig& config);
   [[nodiscard]] absl::StatusOr<JobStatusView> GetStatus(const std::string& job_id);
   [[nodiscard]] absl::StatusOr<std::vector<GpuInfoView>> ListGpus();
+  [[nodiscard]] absl::Status StreamLogsCallback(
+      const std::string& job_id,
+      std::function<void(std::string line)> line_callback);
   [[nodiscard]] absl::Status StreamLogs(const std::string& job_id, std::ostream& stream);
   [[nodiscard]] absl::Status CancelJob(const std::string& job_id);
+  void CancelActiveLogStream();
 
  private:
   [[nodiscard]] absl::StatusOr<std::string> UploadBundle(const std::filesystem::path& path);
@@ -76,6 +95,8 @@ class GpuRunClient {
   ClientOptions options_;
   std::shared_ptr<grpc::Channel> channel_;
   std::unique_ptr<GpuService::Stub> stub_;
+  mutable std::mutex stream_mutex_;
+  grpc::ClientContext* active_stream_context_ = nullptr;
 };
 
 }  // namespace gpu::cli

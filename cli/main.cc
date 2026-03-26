@@ -7,6 +7,9 @@
 
 #include "absl/status/status.h"
 #include "cli/client.h"
+#ifdef GPU_RUN_ENABLE_TUI
+#include "cli/tui.h"
+#endif
 
 namespace {
 
@@ -86,6 +89,15 @@ gpu::Priority ParsePriority(const std::string& value) {
   return gpu::Priority::PRIORITY_UNSPECIFIED;
 }
 
+bool HasInteractiveFlag(int argc, char** argv) {
+  for (int index = 1; index < argc; ++index) {
+    if (std::string_view(argv[index]) == "--interactive") {
+      return true;
+    }
+  }
+  return false;
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -101,6 +113,18 @@ int main(int argc, char** argv) {
       break;
     }
   }
+
+  const bool interactive_requested = HasInteractiveFlag(argc, argv);
+#ifdef GPU_RUN_ENABLE_TUI
+  if (argc == 1 || interactive_requested) {
+    return gpu_run::tui::Run(argc, argv);
+  }
+#else
+  if (interactive_requested) {
+    std::cerr << "gpu-run: --interactive requires -DGPU_RUN_ENABLE_TUI=ON build\n";
+    return 2;
+  }
+#endif
 
   if (index >= argc) {
     PrintUsage();

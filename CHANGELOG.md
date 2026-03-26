@@ -4,10 +4,13 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-03-26
+
 ### Added
 - Optional WSL end-to-end smoke test for submit/status/log retrieval that runs through CTest when `GPU_DISPATCH_E2E_IMAGE` is set to a suitable local Docker image.
 - Checked-in `config/images.allowlist` as the primary server image allowlist.
 - Added the `examples/cuda_smoke` CUDA benchmark bundle for GPU validation runs.
+- Optional ncurses interactive mode for `gpu-run`, including a four-screen wizard and in-session live log viewer behind `-DGPU_RUN_ENABLE_TUI=ON`.
 
 ### Changed
 - Added a client-only CMake path for building `gpu-run` without NVML or server-side components, and documented common remote-client setup failures in the README.
@@ -16,6 +19,8 @@ All notable changes to this project will be documented in this file.
 - Removed the tracked legacy Python root files from `main`; the archive remains on `python_gpu_server`.
 - Scrubbed hardcoded example IP addresses from the README and replaced them with placeholders.
 - Stopped tracking `AGENT.md` on `main` and added it to `.gitignore`.
+- Added `GPU_RUN_ENABLE_TUI` CMake wiring and kept headless `gpu-run` behavior intact, including a clear `--interactive` error in non-TUI builds.
+- Extended the CLI client to support upload progress callbacks, explicit bundle submission, and callback-based log streaming for interactive workflows.
 
 ## [0.1.0] - 2026-03-25
 

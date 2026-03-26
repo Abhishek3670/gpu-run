@@ -13,6 +13,7 @@ set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 include(CTest)
 
 option(GPU_DISPATCH_BUILD_SERVER "Build gpu-server and server-side components" ON)
+option(GPU_RUN_ENABLE_TUI "Build ncurses arrow-key TUI for gpu-run" OFF)
 
 find_package(absl CONFIG REQUIRED)
 find_package(Protobuf REQUIRED)
@@ -49,6 +50,10 @@ if(GPU_DISPATCH_BUILD_SERVER)
   if(NOT NVML_INCLUDE_DIR)
     message(FATAL_ERROR "NVML headers were not found. Install the CUDA toolkit in WSL2.")
   endif()
+endif()
+
+if(GPU_RUN_ENABLE_TUI)
+  find_package(Curses REQUIRED)
 endif()
 
 set(PROTO_FILE ${CMAKE_CURRENT_SOURCE_DIR}/proto/gpu_service.proto)
@@ -157,8 +162,19 @@ if(GPU_DISPATCH_BUILD_SERVER)
   target_link_libraries(gpu-server PRIVATE server_lib)
 endif()
 
-add_executable(gpu-run cli/main.cc)
+set(GPU_RUN_SOURCES cli/main.cc)
+if(GPU_RUN_ENABLE_TUI)
+  list(APPEND GPU_RUN_SOURCES cli/tui.cc)
+endif()
+
+add_executable(gpu-run ${GPU_RUN_SOURCES})
 target_link_libraries(gpu-run PRIVATE client_lib)
+
+if(GPU_RUN_ENABLE_TUI)
+  target_link_libraries(gpu-run PRIVATE ${CURSES_LIBRARIES})
+  target_include_directories(gpu-run PRIVATE ${CURSES_INCLUDE_DIRS} ${CURSES_INCLUDE_DIR})
+  target_compile_definitions(gpu-run PRIVATE GPU_RUN_ENABLE_TUI)
+endif()
 
 if(BUILD_TESTING AND GPU_DISPATCH_BUILD_SERVER)
   find_program(BASH_EXECUTABLE bash REQUIRED)

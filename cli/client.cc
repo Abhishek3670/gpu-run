@@ -11,6 +11,7 @@
 
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
+#include "cli/tui.h"
 
 namespace gpu::cli {
 namespace {
@@ -40,10 +41,18 @@ bool IsExecutable(const std::filesystem::path& path) {
 
 }  // namespace
 
-GpuRunClient::GpuRunClient(ClientOptions options)
-    : options_(std::move(options)) {
+GpuRunClient::GpuRunClient(ClientOptions options) {
+  ResetConnection(std::move(options));
+}
+
+void GpuRunClient::ResetConnection(ClientOptions options) {
+  options_ = std::move(options);
   channel_ = grpc::CreateChannel(options_.server_address, grpc::InsecureChannelCredentials());
   stub_ = GpuService::NewStub(channel_);
+}
+
+ClientOptions GpuRunClient::GetOptions() const {
+  return options_;
 }
 
 absl::StatusOr<std::string> GpuRunClient::RunJob(const RunOptions& options) {
@@ -57,6 +66,94 @@ absl::StatusOr<std::string> GpuRunClient::RunJob(const RunOptions& options) {
     return absl::InvalidArgumentError("entrypoint is required when --script points to a directory");
   }
   return SubmitRemote(options, *bundle_id, entrypoint);
+}
+
+absl::StatusOr<std::string> GpuRunClient::UploadBundleWithProgress(
+    const std::filesystem::path& path,
+    std::function<void(std::int64_t bytes_sent)> progress_callback) {
+  if (!std::filesystem::exists(path)) {
+    return absl::NotFoundError("script path does not exist");
+  }
+
+  grpc::ClientContext context;
+  ApplyMetadata(&context);
+
+  UploadBundleResponse response;
+  auto writer = stub_->UploadBundle(&context, &response);
+
+  std::int64_t bytes_sent = 0;
+  const std::filesystem::path root = std::filesystem::is_regular_file(path) ? path.parent_path() : path;
+  for (const auto& file_path : EnumerateFiles(path)) {
+    const std::filesystem::path relative = std::filesystem::is_regular_file(path)
+        ? file_path.filename()
+        : std::filesystem::relative(file_path, root);
+
+    std::ifstream input(file_path, std::ios::binary);
+    if (!input.is_open()) {
+      return absl::InternalError("failed to read input file");
+    }
+
+    std::array<char, kChunkSize> buffer{};
+    bool sent_any_data = false;
+    while (input.good()) {
+      input.read(buffer.data(), static_cast<std::streamsize>(buffer.size()));
+      const std::streamsize bytes_read = input.gcount();
+      if (bytes_read <= 0) {
+        break;
+      }
+
+      UploadBundleChunk chunk;
+      chunk.set_relative_path(relative.generic_string());
+      chunk.set_executable(IsExecutable(file_path));
+      chunk.set_data(buffer.data(), static_cast<int>(bytes_read));
+      chunk.set_eof(false);
+      if (!writer->Write(chunk)) {
+        return absl::InternalError("bundle upload stream closed unexpectedly");
+      }
+      sent_any_data = true;
+      bytes_sent += static_cast<std::int64_t>(bytes_read);
+      if (progress_callback) {
+        progress_callback(bytes_sent);
+      }
+    }
+
+    UploadBundleChunk eof_chunk;
+    eof_chunk.set_relative_path(relative.generic_string());
+    eof_chunk.set_executable(IsExecutable(file_path));
+    eof_chunk.set_eof(true);
+    if (!sent_any_data) {
+      eof_chunk.clear_data();
+    }
+    if (!writer->Write(eof_chunk)) {
+      return absl::InternalError("bundle upload stream closed before EOF");
+    }
+  }
+
+  writer->WritesDone();
+  const grpc::Status status = writer->Finish();
+  if (!status.ok()) {
+    return FromGrpcStatus(status);
+  }
+  return response.bundle_id();
+}
+
+absl::StatusOr<std::string> GpuRunClient::SubmitJobExplicit(
+    const std::string& bundle_id,
+    const gpu_run::tui::JobConfig& config) {
+  RunOptions options;
+  options.script_path = config.script_path;
+  options.docker_image = config.docker_image;
+  options.entrypoint = config.entrypoint;
+  options.task_type = config.task_type;
+  options.priority = config.priority;
+  options.gpu_count = config.gpu_count;
+  options.preferred_gpu_ids = config.preferred_gpu_ids;
+
+  const std::string entrypoint = DefaultEntrypoint(config.script_path, config.entrypoint);
+  if (entrypoint.empty()) {
+    return absl::InvalidArgumentError("entrypoint is required when --script points to a directory");
+  }
+  return SubmitRemote(options, bundle_id, entrypoint);
 }
 
 absl::StatusOr<JobStatusView> GpuRunClient::GetStatus(const std::string& job_id) {
@@ -110,21 +207,52 @@ absl::StatusOr<std::vector<GpuInfoView>> GpuRunClient::ListGpus() {
   return gpus;
 }
 
-absl::Status GpuRunClient::StreamLogs(const std::string& job_id, std::ostream& stream) {
+absl::Status GpuRunClient::StreamLogsCallback(
+    const std::string& job_id,
+    std::function<void(std::string line)> line_callback) {
   grpc::ClientContext context;
   ApplyMetadata(&context);
+
+  {
+    std::lock_guard<std::mutex> lock(stream_mutex_);
+    active_stream_context_ = &context;
+  }
 
   StreamLogsRequest request;
   request.set_job_id(job_id);
   auto reader = stub_->StreamLogs(&context, request);
 
   StreamLogsResponse chunk;
+  std::string pending_line;
   while (reader->Read(&chunk)) {
-    stream.write(chunk.data().data(), static_cast<std::streamsize>(chunk.data().size()));
-    stream.flush();
+    pending_line.append(chunk.data().data(), chunk.data().size());
+    std::size_t newline_pos = pending_line.find('\n');
+    while (newline_pos != std::string::npos) {
+      line_callback(pending_line.substr(0, newline_pos + 1));
+      pending_line.erase(0, newline_pos + 1);
+      newline_pos = pending_line.find('\n');
+    }
   }
 
-  return FromGrpcStatus(reader->Finish());
+  if (!pending_line.empty()) {
+    line_callback(std::move(pending_line));
+  }
+
+  const grpc::Status status = reader->Finish();
+  {
+    std::lock_guard<std::mutex> lock(stream_mutex_);
+    if (active_stream_context_ == &context) {
+      active_stream_context_ = nullptr;
+    }
+  }
+  return FromGrpcStatus(status);
+}
+
+absl::Status GpuRunClient::StreamLogs(const std::string& job_id, std::ostream& stream) {
+  return StreamLogsCallback(job_id, [&stream](std::string line) {
+    stream.write(line.data(), static_cast<std::streamsize>(line.size()));
+    stream.flush();
+  });
 }
 
 absl::Status GpuRunClient::CancelJob(const std::string& job_id) {
@@ -137,66 +265,15 @@ absl::Status GpuRunClient::CancelJob(const std::string& job_id) {
   return FromGrpcStatus(stub_->CancelJob(&context, request, &response));
 }
 
+void GpuRunClient::CancelActiveLogStream() {
+  std::lock_guard<std::mutex> lock(stream_mutex_);
+  if (active_stream_context_ != nullptr) {
+    active_stream_context_->TryCancel();
+  }
+}
+
 absl::StatusOr<std::string> GpuRunClient::UploadBundle(const std::filesystem::path& path) {
-  if (!std::filesystem::exists(path)) {
-    return absl::NotFoundError("script path does not exist");
-  }
-
-  grpc::ClientContext context;
-  ApplyMetadata(&context);
-
-  UploadBundleResponse response;
-  auto writer = stub_->UploadBundle(&context, &response);
-
-  const std::filesystem::path root = std::filesystem::is_regular_file(path) ? path.parent_path() : path;
-  for (const auto& file_path : EnumerateFiles(path)) {
-    const std::filesystem::path relative = std::filesystem::is_regular_file(path)
-        ? file_path.filename()
-        : std::filesystem::relative(file_path, root);
-
-    std::ifstream input(file_path, std::ios::binary);
-    if (!input.is_open()) {
-      return absl::InternalError("failed to read input file");
-    }
-
-    std::array<char, kChunkSize> buffer{};
-    bool sent_any_data = false;
-    while (input.good()) {
-      input.read(buffer.data(), static_cast<std::streamsize>(buffer.size()));
-      const std::streamsize bytes_read = input.gcount();
-      if (bytes_read <= 0) {
-        break;
-      }
-
-      UploadBundleChunk chunk;
-      chunk.set_relative_path(relative.generic_string());
-      chunk.set_executable(IsExecutable(file_path));
-      chunk.set_data(buffer.data(), static_cast<int>(bytes_read));
-      chunk.set_eof(false);
-      if (!writer->Write(chunk)) {
-        return absl::InternalError("bundle upload stream closed unexpectedly");
-      }
-      sent_any_data = true;
-    }
-
-    UploadBundleChunk eof_chunk;
-    eof_chunk.set_relative_path(relative.generic_string());
-    eof_chunk.set_executable(IsExecutable(file_path));
-    eof_chunk.set_eof(true);
-    if (!sent_any_data) {
-      eof_chunk.clear_data();
-    }
-    if (!writer->Write(eof_chunk)) {
-      return absl::InternalError("bundle upload stream closed before EOF");
-    }
-  }
-
-  writer->WritesDone();
-  const grpc::Status status = writer->Finish();
-  if (!status.ok()) {
-    return FromGrpcStatus(status);
-  }
-  return response.bundle_id();
+  return UploadBundleWithProgress(path, {});
 }
 
 absl::StatusOr<std::string> GpuRunClient::SubmitRemote(
@@ -253,6 +330,8 @@ absl::Status GpuRunClient::FromGrpcStatus(const grpc::Status& status) {
       return absl::FailedPreconditionError(status.error_message());
     case grpc::StatusCode::UNAVAILABLE:
       return absl::UnavailableError(status.error_message());
+    case grpc::StatusCode::CANCELLED:
+      return absl::CancelledError(status.error_message());
     default:
       return absl::InternalError(status.error_message());
   }
