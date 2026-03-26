@@ -143,7 +143,7 @@ hostname -I
 ```
 
 Then run the helper from an elevated PowerShell on Windows and pass the actual
-WSL IP and LAN subnet for your machine:
+IP value, not the literal string `WslIp` and not angle-bracket placeholders:
 
 ```powershell
 powershell.exe -ExecutionPolicy Bypass -File .\scripts\windows_expose_wsl.ps1 `
@@ -167,7 +167,7 @@ Listen on ipv4:             Connect to ipv4:
 
 Address         Port        Address         Port
 --------------- ----------  --------------- ----------
-0.0.0.0         50051       <wsl-ip>        50051
+0.0.0.0         50051       <wsl-ip>     50051
 ```
 
 Then confirm that the Windows host is listening on its LAN IP:
